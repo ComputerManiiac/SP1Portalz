@@ -1,0 +1,350 @@
+// This is the main file for the game logic and function
+//
+//
+#include "game.h"
+#include "Framework\console.h"
+#include <iostream>
+#include <iomanip>
+#include <sstream>
+
+
+
+
+
+// Game specific variables here
+SGameChar   g_sChar;
+EGAMESTATES g_eGameState = S_SPLASHSCREEN;
+
+
+// Console object
+Console g_Console(120, 50, "SP1 WIP");
+
+
+
+Manager* manager;
+
+int lastMaxCollisionCall = 0;
+//--------------------------------------------------------------
+// Purpose  : Initialisation function
+//            Initialize variables, allocate memory, load data from file, etc. 
+//            This is called once before entering into your main loop
+// Input    : void
+// Output   : void
+//--------------------------------------------------------------
+void init( void )
+{	
+	// Initialise Manager singleton and feed the created console
+	// Manager manages game logic, player, loading and saving of games.
+	manager = Manager::getInstance();
+	manager->setConsole(&g_Console);
+
+	manager->setTimer(TIMER_COLLISION, 1.0);
+
+
+
+
+	// Disable console cursor
+	g_Console.toggleCursor();
+
+    // sets the initial state for the game
+    g_eGameState = S_SPLASHSCREEN;
+
+    g_sChar.m_cLocation.X = g_Console.getConsoleSize().X / 2;
+    g_sChar.m_cLocation.Y = g_Console.getConsoleSize().Y / 2;
+    g_sChar.m_bActive = true;
+
+    // sets the width, height and the font name to use in the console
+    g_Console.setConsoleFont(0, 16, L"Consolas");
+}
+
+//--------------------------------------------------------------
+// Purpose  : Reset before exiting the program
+//            Do your clean up of memory here
+//            This is called once just before the game exits
+// Input    : Void
+// Output   : void
+//--------------------------------------------------------------
+void shutdown( void )
+{
+    // Reset to white text on black background
+    colour(FOREGROUND_BLUE | FOREGROUND_GREEN | FOREGROUND_RED);
+
+    g_Console.clearBuffer();
+}
+
+//--------------------------------------------------------------
+// Purpose  : Getting all the key press states
+//            This function checks if any key had been pressed since the last time we checked
+//            If a key is pressed, the value for that particular key will be true
+//
+//            Add more keys to the enum in game.h if you need to detect more keys
+//            To get other VK key defines, right click on the VK define (e.g. VK_UP) and choose "Go To Definition" 
+//            For Alphanumeric keys, the values are their ascii values (uppercase).
+// Input    : Void
+// Output   : void
+//--------------------------------------------------------------
+void getInput( void )
+{    
+	manager->updateKeyPress();
+}
+
+//--------------------------------------------------------------
+// Purpose  : Update function
+//            This is the update function
+//            double dt - This is the amount of time in seconds since the previous call was made
+//
+//            Game logic should be done here.
+//            Such as collision checks, determining the position of your game characters, status updates, etc
+//            If there are any calls to write to the console here, then you are doing it wrong.
+//
+//            If your game has multiple states, you should determine the current state, and call the relevant function here.
+//
+// Input    : dt = deltatime
+// Output   : void
+//--------------------------------------------------------------
+void update(double dt)
+{
+
+	manager->updateTimers(dt);
+	manager->updateLater(dt);
+
+
+	// DEBUG ONLY
+	manager->setTimer(TIMER_COLLISION, manager->getTimer(TIMER_COLLISION) - dt);
+	if (manager->getTimer(TIMER_COLLISION) <= 0.0) {
+		lastMaxCollisionCall = manager->collisionCalls;
+		manager->collisionCalls = 0;
+		manager->setTimer(TIMER_COLLISION, 1.0);
+	}
+
+	std::vector<Component*> logicCategory = manager->getCategory(COMP_LOGIC);
+	for (int i = 0; i < (int)logicCategory.size(); i++) {
+		LogicComponent* logicComp = dynamic_cast<LogicComponent*>(logicCategory[i]);
+		GameObject* parent = logicComp->getParent();
+		std::string name = parent->getName();
+		if (name == "InteractiveCube") {
+			InteractiveCube* cube = dynamic_cast<InteractiveCube*>(parent);
+			cube->update();
+		}
+	}
+
+
+	std::vector<Component*> patrolCategory = manager->getCategory(COMP_PATROL);
+	for (int i = 0; i < (int)patrolCategory.size(); i++) {
+		PatrolComponent* patrolComp = dynamic_cast<PatrolComponent*>(patrolCategory[i]);
+		patrolComp->updateTime(dt);
+	}
+
+
+
+    switch (g_eGameState)
+    {
+        case S_SPLASHSCREEN : splashScreenWait(); // game logic for the splash screen
+            break;
+        case S_GAME: gameplay(); // gameplay logic when we are in the game
+            break;
+    }
+}
+//--------------------------------------------------------------
+// Purpose  : Render function is to update the console screen
+//            At this point, you should know exactly what to draw onto the screen.
+//            Just draw it!
+//            To get an idea of the values for colours, look at console.h and the URL listed there
+// Input    : void
+// Output   : void
+//--------------------------------------------------------------
+void render()
+{
+    clearScreen();      // clears the current screen and draw from scratch 
+    switch (g_eGameState)
+    {
+        case S_SPLASHSCREEN: renderSplashScreen();
+            break;
+        case S_GAME: renderGame();
+            break;
+    }
+    renderFramerate();  // renders debug information, frame rate, elapsed time, etc
+    renderToScreen();   // dump the contents of the buffer to the screen, one frame worth of game
+}
+
+void splashScreenWait()    // waits for time to pass in splash screen
+{
+    if (manager->getTimer(TIMER_ELAPSED) > 2.0) // wait for 3 seconds to switch to game mode, else do nothing
+        g_eGameState = S_GAME;
+
+}
+
+void gameplay() // gameplay logic
+{
+    processUserInput(); // checks if you should change states or do something else with the game, e.g. pause, exit
+
+	if (manager->getTimer(TIMER_BOUNCE) > manager->getTimer(TIMER_ELAPSED)) return;
+
+	if (manager->checkKeyPressed(K_TILDE))
+		manager->showDebug = !manager->showDebug;
+
+
+	Player *p = manager->getPlayer();
+	p->update();
+
+	smoothCameraMovement();
+
+
+	std::vector<Component*> patrolCategory = manager->getCategory(COMP_PATROL);
+	for (int i = 0; i < (int)patrolCategory.size(); i++) {
+		PatrolComponent* patrolComp = dynamic_cast<PatrolComponent*>(patrolCategory[i]);
+		patrolComp->patrol();
+	}
+
+	manager->setTimer(TIMER_BOUNCE, manager->getTimer(TIMER_ELAPSED) + 0.06);
+
+}
+
+void smoothCameraMovement() {
+	Player *p = manager->getPlayer();
+	SHORT cameraCurrentX = manager->camera.X;
+	SHORT cameraTargetX = p->getPosition().X - (manager->cameraWidth / 2);
+
+
+
+	int amount = (cameraTargetX - cameraCurrentX) / 8;
+	if (amount > manager->cameraWidth) amount = manager->cameraWidth;
+	manager->camera.X += amount;
+	if (manager->camera.X < 0)
+		manager->camera.X = 0;
+	manager->camera.X2 = manager->camera.X + manager->cameraWidth;
+}
+
+
+void processUserInput()
+{
+    // quits the game if player hits the escape key
+    if (manager->checkKeyPressed(K_ESCAPE))
+        g_bQuitGame = true;    
+}
+
+void clearScreen()
+{
+    // Clears the buffer with this colour attribute
+    g_Console.clearBuffer(manager->interpretColour(BLACK, WHITE));
+}
+
+void renderSplashScreen()  // renders the splash screen
+{
+    COORD c = g_Console.getConsoleSize();
+    c.Y /= 3;
+    c.X = c.X / 2 - 9;
+    g_Console.writeToBuffer(c, "A game in 3 seconds", 0x03);
+    c.Y += 1;
+    c.X = g_Console.getConsoleSize().X / 2 - 20;
+    g_Console.writeToBuffer(c, "Press <Space> to change character colour", 0x09);
+    c.Y += 1;
+    c.X = g_Console.getConsoleSize().X / 2 - 9;
+    g_Console.writeToBuffer(c, "Press 'Esc' to quit", 0x09);
+}
+
+void renderGame()
+{
+	
+	/*
+	Find all Renderable Components and call draw function	
+	*/
+
+	std::vector<Component*> renderCategory = manager->getCategory(COMP_RENDERABLE);
+	for (int i = 0; i < (int)renderCategory.size(); i++) {
+		RenderComponent* renderComp = dynamic_cast<RenderComponent*>(renderCategory[i]);
+		GameObject* obj = renderComp->getParent();
+		COORD pos = obj->getPosition();
+		bool withinViewport = ((pos.X + obj->getWidth() >= manager->camera.X - 50) && (pos.X + obj->getWidth()) <= manager->camera.X2 + 50);
+
+		if(renderComp->isActive() && withinViewport)
+			renderComp->draw();
+	}
+
+
+}
+
+
+
+
+
+void renderFramerate()
+{
+
+	if (!manager->showDebug) return;
+
+    COORD c;
+    // displays the framerate
+    std::ostringstream ss;
+    ss << std::fixed << std::setprecision(3);
+    ss << 1.0 / manager->getTimer(TIMER_DELTA) << "fps";
+	c.X = 0;
+    c.Y = 1;
+    g_Console.writeToBuffer(c, ss.str(), manager->interpretColour(RED,WHITE));
+
+    // displays the elapsed time
+    ss.str("");
+    ss << manager->getTimer(TIMER_ELAPSED) << "secs";
+    c.Y = 0;
+    g_Console.writeToBuffer(c, ss.str(), manager->interpretColour(BLACK, WHITE));
+
+	// Display Mouse Coordinates 
+	COORD mouseCoord = g_Console.getMouseXY();
+	Viewport v = manager->camera;
+	std::string xCord = std::to_string((int) v.X + mouseCoord.X);
+	std::string yCord = std::to_string((int) mouseCoord.Y);
+
+	g_Console.writeToBuffer({0,2}, "(Viewport) Mouse X: " + xCord + ", Y: " + yCord, manager->interpretColour(MAGENTA, WHITE));
+	
+	Player *p = manager->getPlayer();
+	COORD playerCoord = p->getPosition();
+
+	// Display Player Coordinates
+	xCord = std::to_string((int) playerCoord.X);
+	yCord = std::to_string((int) playerCoord.Y);
+	g_Console.writeToBuffer({0,3}, "Player X: " + xCord + ", Y: " + yCord, manager->interpretColour(BLUE, WHITE));
+
+	// Display onGround status
+	std::string status = (p->isOnGround()) ? "True" : "False";
+	g_Console.writeToBuffer({0,4}, "On Ground: " + status, manager->interpretColour(GREEN, WHITE));
+
+	// Display Object Count
+	std::string objectCount = "Game Objects: " + std::to_string(manager->getGameObjects()->size());
+	g_Console.writeToBuffer({ 0,5 }, objectCount, manager->interpretColour(BROWN, WHITE));
+
+	// Display Collision Calls
+	std::string collisionCalls = "Collision Calls: " + std::to_string(lastMaxCollisionCall);
+	g_Console.writeToBuffer({ 0,6 }, collisionCalls, manager->interpretColour(BRIGHT_YELLOW, BLACK));
+
+	// Display Velocity
+	std::string accY = "Acceleration Y: " + std::to_string(p->accelerationY);
+	g_Console.writeToBuffer({ 0,7 }, accY, manager->interpretColour(BRIGHT_RED, WHITE));
+	std::string accX = "Acceleration X: " + std::to_string(p->accelerationX);
+	g_Console.writeToBuffer({ 0,8 }, accX, manager->interpretColour(BLUE, WHITE));
+	std::string accTP = "Acceleration TP: " + std::to_string(p->accelerationTP);
+	g_Console.writeToBuffer({ 0,9 }, accTP, manager->interpretColour(GREEN, WHITE));
+
+	std::string velocityY = "Velocity Y: " + std::to_string(p->velocityY);
+	g_Console.writeToBuffer({ 0,10}, velocityY, manager->interpretColour(BROWN, WHITE));
+	std::string velocityX = "Velocity X: " + std::to_string(p->velocityX);
+	g_Console.writeToBuffer({ 0,11 }, velocityX, manager->interpretColour(MAGENTA, WHITE));
+
+	//std::string momentumY = "Momentum Y: " + std::to_string(p->momentumY);
+	//g_Console.writeToBuffer({ 0,9 }, momentumY, manager->interpretColour(BROWN, WHITE));
+	//std::string momentumX = "Momentum X: " + std::to_string(p->momentumX);
+	//g_Console.writeToBuffer({ 0,10 }, momentumX, manager->interpretColour(GREEN, WHITE));
+
+	std::string vp = "Viewport: {" + std::to_string(manager->camera.X) + ",0} to {"
+		+ std::to_string(manager->camera.X2) + ",0}";
+		g_Console.writeToBuffer({ 0,11 }, vp, manager->interpretColour(BRIGHT_MAGENTA, WHITE));
+
+
+
+
+
+}
+void renderToScreen()
+{
+    // Writes the buffer to the console, hence you will see what you have written
+    g_Console.flushBufferToConsole();
+}

@@ -1,0 +1,450 @@
+#include "Player.h"
+#include "Manager.h"
+
+
+
+Player::Player()
+{
+}
+
+Player::Player(Manager *m, COORD position, int width, int height, int horizSpeed, double gravity, int jumpPower)
+	: GameObject("Player", position, width, height, -1, { "" }) {
+
+	/* Initialise Player's Component
+	-> Render: Called every render()
+	-> 
+
+	*/
+	RenderComponent *r = new RenderComponent(this);
+	addComponent(r, COMP_RENDERABLE);
+	m->addComponentToCategory(r, COMP_RENDERABLE);
+
+	angle = -1;
+	// Initialise Player Variables
+	this->horizontalSpeed = horizSpeed;
+	this->gravity = gravity;
+	this->jumpPower = jumpPower;
+
+	// Populate Player's Graphics [TEMP]
+	std::vector<Graphics> temp;
+	for (int y = 0; y < height; y++) {
+		for (int x = 0; x < width; x++) {
+			Graphics g = { ' ', 0 };
+			g.colour = manager->interpretColour(BLUE, WHITE);
+
+			temp.push_back(g);
+		}
+		r->addToGraphics(y, temp);
+		temp.clear();
+	}
+}
+
+
+Player::~Player()
+{
+}
+
+
+SHORT Player::getHorizontalSpeed() {
+	return this->horizontalSpeed;
+}
+
+
+double Player::getGravity() {
+	return this->gravity;
+}
+
+int Player::getJumpPower() {
+	return this->jumpPower;
+}
+
+bool Player::isOnGround() {
+	return this->onGround;
+}
+
+void Player::setOnGround(bool ground) {
+	this->onGround = ground;
+}
+bool Player::isJumping() {
+	return this->jumping;
+}
+
+void Player::setIsJumping(bool jumping) {
+	this->jumping = jumping;
+}
+
+double Player::getJumpTime() {
+	return this->jumpTime;
+}
+
+int Player::getAngle() {
+	return this->angle;
+}
+
+
+/*
+
+UPDATE EVENT
+-> This event is called every update() loop in game.cpp
+
+Player's Update Event includes:
+-> Moving in each direction
+-> Gravity Pull
+
+*/
+
+void Player::update() {
+	manager = Manager::getInstance();
+	onMove();
+
+	onShoot();
+	if (shootAnimation) {
+		if ( shootPathCurrentBlock < (int) (shootPoints.size() - 1)) {
+			shootPathCurrentBlock++;
+		}
+		else {
+			GameObject *obj = manager->spawnNewGameObject("Portal", shootPoints[shootPathCurrentBlock], 2, 4, { std::to_string(angle) });
+			Portal* portal = dynamic_cast<Portal*>(obj);
+			portals.push_back(portal);
+			if (numOfPortals == 2) {
+				portals[0]->setPortalPair(portal);
+				portal->setPortalPair(portals[0]);
+			}
+			
+			shootAnimation = false;
+		}
+	}
+
+}
+
+void Player::draw() {
+	
+	if (shootAnimation) {
+		manager->getConsole()->writeToBuffer(shootPoints[shootPathCurrentBlock], " ", manager->interpretColour(RED, WHITE));
+	}
+
+}
+
+std::vector<COORD>* Player::getShootPoints() {
+	return &(this->shootPoints);
+}
+
+void Player::onShoot() {
+	if (manager->getTimer(TIMER_SHOOT) > manager->getTimer(TIMER_ELAPSED)) return;
+	if (GetConsoleWindow() != GetForegroundWindow()) return;
+	if (manager->checkKeyPressed(K_LBUTTON) && numOfPortals < 2) {
+		COORD mouse = manager->getConsole()->getMouseXY();
+		if (mouse.X < 0 || mouse.X > 120 || mouse.Y < 0 || mouse.Y > 50) return;
+		COORD player = getPosition();
+		shootPoints.clear();
+		shootPoints = line(player, calculateEndPoint(player,mouse));
+		COORD portal;
+		int id = -1;
+		for (int i = 0; i < (int) shootPoints.size(); i++) {
+			GameObject *w = manager->placeMeeting(shootPoints[i], "Wall");
+			if (w != NULL) {
+				portal = shootPoints[i-1];
+				id = i;
+				break;
+			}
+
+		}
+		if (id != -1) {
+			if (numOfPortals < 2) {
+				
+				angle = calculateDirection(player, portal);
+				shootPoints.erase(shootPoints.begin() + id, shootPoints.end());
+				optimiseShootPoints();
+				shootPathCurrentBlock = 0;
+				shootAnimation = true;
+				numOfPortals++;
+
+			}
+		}
+		//RenderComponent* renderComp = dynamic_cast<RenderComponent*>(portal->getComponent(COMP_RENDERABLE));
+		
+		manager->setTimer(TIMER_SHOOT, manager->getTimer(TIMER_ELAPSED) + 0.2);
+	}
+
+
+}
+
+
+int Player::calculateDirection(COORD one, COORD two) {
+	int diffX = (int) (two.X - one.X);
+	int diffY = (int)(two.Y - one.Y);
+
+	// Angle = Top(0), Right(1), Bottom(2), Left(3)
+	int angle = 0;
+	if (diffX > 0) {
+		if (diffY == 0) angle = 1;
+		double gradient = diffY / (double)diffX;
+		if(gradient > 0)
+			angle = (gradient > 1) ? 0 : 1;
+		if (gradient < 0)
+			angle = (gradient < -1) ? 2 : 1;
+	}
+	else if (diffX < 0) {
+		if (diffY == 0) angle = 3;
+		double gradient = diffY / (double)diffX;
+		if (gradient > 0)
+			angle = (gradient > 1) ? 0 : 3;
+		if (gradient < 0)
+			angle = (gradient < -1) ? 2 : 3;
+	}
+
+	return angle;
+
+}
+
+
+void Player::onMove() {
+
+	COORD coord = getPosition();
+
+	/* Gravity and onGround Checks*/
+	COORD leftBottom = coord;
+	leftBottom.Y += (SHORT)getHeight();
+	COORD rightBottom = leftBottom;
+	rightBottom.X += (SHORT)(getWidth() - 1);
+	GameObject* leftBottomObj = manager->placeMeeting(leftBottom, "Wall");
+	GameObject* rightBottomObj = manager->placeMeeting(rightBottom, "Wall");
+	setOnGround((leftBottomObj != NULL) || (rightBottomObj != NULL));
+
+	if (!isOnGround()) {
+		/* Gravity */
+		double amt = getGravity() * manager->getTimer(TIMER_DELTA) * 20.0;
+		manager->setTimer(TIMER_GRAVITY, manager->getTimer(TIMER_GRAVITY) + amt);
+		if (manager->getTimer(TIMER_GRAVITY) >= 1.0) {
+			coord.Y++;
+			manager->setTimer(TIMER_GRAVITY, manager->getTimer(TIMER_GRAVITY) - 1.0);
+		}
+		setPosition(coord);
+	}
+	else {
+		/* Jumping */
+		if (!isJumping()
+			&& (manager->checkKeyPressed(K_UP) || manager->checkKeyPressed(K_W))
+			&& manager->getTimer(TIMER_JUMP) >= 0.30) {
+			coord.Y -= getJumpPower();
+			manager->setTimer(TIMER_JUMP, 0);
+			setPosition(coord);
+		}
+		else {
+			setIsJumping(false);
+		}
+
+	}
+
+	/* Left and Right Movement Checks */
+	coord = getPosition();
+	SHORT rightX = coord.X + getWidth() - 1;
+	SHORT bottomY = coord.Y + getHeight() - 1;
+
+
+	if (manager->checkKeyPressed(K_LEFT) || manager->checkKeyPressed(K_A)) {
+		if (numOfPortals == 2 && manager->placeMeeting({ coord.X - 1 , coord.Y }, "Portal")) {
+				int x = 0;
+		}
+		else {
+
+			if (!manager->placeMeeting({ coord.X - 1, coord.Y }, "Wall")
+				&& !manager->placeMeeting({ coord.X - 1, bottomY }, "Wall")) {
+
+				SHORT projectedX = coord.X - getHorizontalSpeed();
+
+				COORD leftTop = { projectedX, coord.Y };
+				COORD leftBottom = { projectedX, bottomY };
+
+
+				GameObject *obj = manager->placeMeeting(leftTop, "Wall");
+				GameObject *obj2 = manager->placeMeeting(leftBottom, "Wall");
+
+				if (obj == NULL && obj2 == NULL) {
+					coord.X -= getHorizontalSpeed();
+					velocityX = (int)-getHorizontalSpeed();
+				}
+				else {
+					COORD currentLeftTop = { coord.X - 1, coord.Y };
+					COORD currentLeftBottom = { coord.X - 1, bottomY };
+					obj = manager->placeMeeting(currentLeftTop, "Wall");
+					obj2 = manager->placeMeeting(currentLeftBottom, "Wall");
+					while (obj == NULL && obj2 == NULL) {
+						coord.X--;
+						currentLeftTop.X--;
+						currentLeftBottom.X--;
+						obj = manager->placeMeeting(currentLeftTop, "Wall");
+						obj2 = manager->placeMeeting(currentLeftBottom, "Wall");
+					}
+
+				}
+			}
+		}
+	}else if (manager->checkKeyPressed(K_RIGHT) || manager->checkKeyPressed(K_D)) {
+		if (numOfPortals == 2 && manager->placeMeeting({ coord.X - 1 , coord.Y }, "Portal")) {
+			int x = 0;
+		}else {
+			SHORT sWidth = (SHORT)getWidth();
+			if (!manager->placeMeeting({ coord.X + sWidth,coord.Y }, "Wall")
+				&& !manager->placeMeeting({ coord.X + sWidth, bottomY }, "Wall")) {
+
+				SHORT projectedX = coord.X + sWidth - 1 + getHorizontalSpeed();
+
+				COORD rightTop = { projectedX, coord.Y };
+				COORD rightBottom = { projectedX, bottomY };
+
+				GameObject *obj = manager->placeMeeting(rightTop, "Wall");
+				GameObject *obj2 = manager->placeMeeting(rightBottom, "Wall");
+
+				if (obj == NULL && obj2 == NULL) {
+					coord.X += getHorizontalSpeed();
+					velocityX = (int)getHorizontalSpeed();
+				}
+				else {
+					COORD currentRightTop = { coord.X + sWidth, coord.Y };
+					COORD currentRightBottom = { coord.X + sWidth, bottomY };
+
+					obj = manager->placeMeeting(currentRightTop, "Wall");
+					obj2 = manager->placeMeeting(currentRightBottom, "Wall");
+
+					while (obj == NULL && obj2 == NULL) {
+						coord.X++;
+						currentRightTop.X++;
+						currentRightBottom.X++;
+						obj = manager->placeMeeting(currentRightTop, "Wall");
+						obj2 = manager->placeMeeting(currentRightBottom, "Wall");
+					}
+				}
+			}
+		}
+	}
+	else {
+		velocityX = 0;
+	}
+
+	setPosition(coord);
+
+
+}
+
+void Player::moveToDestnSmooth(COORD start, COORD destination) {
+
+	// Check top right and bottom right
+	GameObject *checkWall = manager->placeMeeting(destination, "Wall");
+	COORD bottomRight = destination;
+	bottomRight.Y += getHeight() - 1;
+	GameObject *checkWall2 = manager->placeMeeting(bottomRight, "Wall");
+
+	COORD finalCoords = start;
+	if (checkWall == NULL && checkWall2 == NULL) {
+		finalCoords = destination;
+	} else {
+		COORD topRight = start;
+		topRight.X++;
+		checkWall = manager->placeMeeting(start.X+1, "Wall");
+	}
+	setPosition(destination);
+}
+
+void Player::optimiseShootPoints() {
+	int size = (int) shootPoints.size();
+	std::vector<COORD> optimised;
+
+	int increment = size / 4;
+	if (increment == 0) increment = 1;
+	for (int i = 0; i < size; i+= increment) {
+		optimised.push_back(shootPoints[i]);
+	}
+	optimised.push_back(shootPoints[size - 1]);
+	shootPoints = optimised;
+}
+
+
+int Player::sign(int dxy)
+{
+	if (dxy<0) return -1;
+	else if (dxy>0) return 1;
+	else return 0;
+}
+
+COORD Player::calculateEndPoint(COORD one, COORD two) {
+
+	int x1 = (int)one.X;
+	int y1 = (int)one.Y;
+	int x2 = (int)two.X;
+	int y2 = (int)two.Y;
+
+
+	if (x1 == x2 && abs(y2-y1) > 0)
+		return two;
+
+	int x3 = 100;
+
+	if (x2 - x1 < 0) x3 = -1;
+
+	double gradient = ((double)(y2 - y1)) / ((double)(x2 - x1));
+	double yintercept = (y1 - gradient * x1);
+	int y3 = (int)((gradient * x3) + yintercept);
+	return{ (SHORT)x3,(SHORT)y3 };
+}
+
+std::vector<COORD> Player::line(COORD one, COORD two) {
+
+	std::vector<COORD> list;
+	int x1 = (int)one.X;
+	int y1 = (int)one.Y;
+	int x2 = (int)two.X;
+	int y2 = (int)two.Y;
+
+	int diffY = abs(y2 - y1);
+
+
+
+	int dX = x2 - x1;
+	int dY = y2 - y1;
+
+	//# Increments
+	int sX = sign(dX);
+	int sY = sign(dY);
+
+	//# Segment length
+	dX = abs(dX);
+	dY = abs(dY);
+	int maxD = max(dX, dY);
+
+	//# Initial remainder
+	double r = maxD / 2;
+
+	int x = x1;
+	int y = y1;
+
+	if (dX > dY){
+		//# Main loop
+		for (int i = 0; i< maxD; i++) {
+			if (x >= 0 && x <= 120 && y >= 0 && y <= 50)
+				list.push_back({ (SHORT)x, (SHORT)y });
+			//# Update (X, Y) and R
+			x += sX;
+			r += dY; // Horizontal Movement
+			if (r >= dX)
+			{
+				y += sY;
+				r -= dX; // Diagonal Movement
+			}
+		}
+	} else {
+		for (int i = 0; i< maxD; i++) {
+			if (x >= 0 && x <= 120 && y >= 0 && y <= 50)
+				list.push_back({ (SHORT)x, (SHORT)y });
+			//# Update (X, Y) and R
+			y += sY;
+			r += dX; // Horizontal Movement
+			if (r >= dY)
+			{
+				x += sX;
+				r -= dY; // Diagonal Movement
+			}
+		}
+	}
+	return list;
+}

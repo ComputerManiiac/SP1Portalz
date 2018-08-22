@@ -1,0 +1,560 @@
+#include "Player.h"
+#include "Manager.h"
+
+
+
+Player::Player()
+{
+}
+
+Player::Player(Manager *m, COORD position, int width, int height, int horizSpeed, double gravity, int jumpPower)
+	: GameObject("Player", position, width, height, -1, { "" }) {
+
+	/* Initialise Player's Component
+	-> Render: Called every render()
+	-> 
+
+	*/
+	RenderComponent *r = new RenderComponent(this);
+	addComponent(r, COMP_RENDERABLE);
+	m->addComponentToCategory(r, COMP_RENDERABLE);
+
+	angle = -1;
+	// Initialise Player Variables
+	this->horizontalSpeed = horizSpeed;
+	this->gravity = gravity;
+	this->jumpPower = jumpPower;
+	startPortal = -1;
+
+	// Populate Player's Graphics [TEMP]
+	std::vector<Graphics> temp;
+	for (int y = 0; y < height; y++) {
+		for (int x = 0; x < width; x++) {
+			Graphics g = { ' ', 0 };
+			g.colour = manager->interpretColour(BLUE, WHITE);
+
+			temp.push_back(g);
+		}
+		r->addToGraphics(y, temp);
+		temp.clear();
+	}
+}
+
+
+Player::~Player()
+{
+}
+
+
+SHORT Player::getHorizontalSpeed() {
+	return this->horizontalSpeed;
+}
+
+
+double Player::getGravity() {
+	return this->gravity;
+}
+
+int Player::getJumpPower() {
+	return this->jumpPower;
+}
+
+bool Player::isOnGround() {
+	return this->onGround;
+}
+
+void Player::setOnGround(bool ground) {
+	this->onGround = ground;
+}
+bool Player::isJumping() {
+	return this->jumping;
+}
+
+void Player::setIsJumping(bool jumping) {
+	this->jumping = jumping;
+}
+
+double Player::getJumpTime() {
+	return this->jumpTime;
+}
+
+int Player::getAngle() {
+	return this->angle;
+}
+
+
+/*
+
+UPDATE EVENT
+-> This event is called every update() loop in game.cpp
+
+Player's Update Event includes:
+-> Moving in each direction
+-> Gravity Pull
+
+*/
+
+void Player::update() {
+	manager = Manager::getInstance();
+	onMove();
+	onShoot();
+	onShootHit();
+
+}
+
+
+
+void Player::draw() {
+	
+	if (shootAnimation) {
+		COORD pos = shootPoints[shootPathCurrentBlock];
+		pos.X -= manager->camera.X;
+		manager->getConsole()->writeToBuffer(pos, " ", manager->interpretColour(RED, WHITE));
+	}
+}
+
+std::vector<COORD>* Player::getShootPoints() {
+	return &(this->shootPoints);
+}
+
+void Player::onShoot() {
+	if (manager->getTimer(TIMER_SHOOT) > manager->getTimer(TIMER_ELAPSED)) return;
+	if (GetConsoleWindow() != GetForegroundWindow() || manager->getConsole()->getMouseXY().Y < 0) return;
+
+	if (manager->checkKeyPressed(K_LBUTTON)) {
+
+		shootPoints.clear();
+
+		COORD mouse = manager->getConsole()->getMouseXY();
+		mouse.X += Manager::getInstance()->camera.X;
+		COORD player = getPosition();
+
+	
+		shootPoints = line(player, calculateEndPoint(player,mouse));
+		COORD portal;
+		int id = -1;
+		for (int i = 0; i < (int) shootPoints.size(); i++) {
+
+			GameObject *w = manager->placeMeeting(shootPoints[i], "Wall");
+			GameObject *hitPortal = manager->placeMeeting(shootPoints[i], "Portal");
+			if (w != NULL && hitPortal == NULL) {
+				portal = shootPoints[i-1];
+				id = i;
+				break;
+			}
+		}
+		if (id != -1) {
+			shootPoints.erase(shootPoints.begin() + id, shootPoints.end());
+			optimiseShootPoints();
+			shootPathCurrentBlock = 0;
+			shootAnimation = true;
+			numOfPortals++;
+		}
+		manager->setTimer(TIMER_SHOOT, manager->getTimer(TIMER_ELAPSED) + 0.75);
+	}
+
+
+}
+
+void Player::onShootHit() {
+	if (!shootAnimation) return;
+
+	if (shootPathCurrentBlock < (int)(shootPoints.size() - 1)) {
+		shootPathCurrentBlock++;
+	}
+	else {
+		COORD spawnPosition = shootPoints[shootPathCurrentBlock];
+		//spawnPosition.X += manager->camera.X;
+		GameObject *obj = manager->spawnNewGameObject("Portal", spawnPosition, 2, 4, { std::to_string(angle) });
+		Portal* portal = dynamic_cast<Portal*>(obj);
+		portal->setDirection(getPortalDirection(spawnPosition));
+		//portal->unstuckMe();
+
+		if (numOfPortals == 3) {
+			numOfPortals = 2;
+
+			int endPortal = 1 - startPortal;
+
+			portals[startPortal]->destroy();
+			portals[startPortal] = portal;
+
+			portals[startPortal]->setPair(portals[endPortal]);
+			portals[endPortal]->setPair(portals[startPortal]);
+
+			startPortal = endPortal;
+
+		}
+		else {
+
+			if (numOfPortals == 2) {
+				portals[0]->setPair(portal);
+				portal->setPair(portals[0]);
+				portals[1] = portal;
+				startPortal = 0;
+			}
+			portals[numOfPortals - 1] = portal;
+		}
+
+		shootAnimation = false;
+	}
+}
+
+
+
+
+PortalDir Player::getPortalDirection(COORD pos) {
+	
+	if (manager->placeMeeting({pos.X + (SHORT) portalWidth, pos.Y }, "Wall")) {
+		return PORTAL_LEFT;
+	}
+	else if (manager->placeMeeting({ pos.X - 1, pos.Y }, "Wall")) {
+		return PORTAL_RIGHT;
+	}
+	else if (manager->placeMeeting({ pos.X, pos.Y - 1 }, "Wall")) {
+		return PORTAL_BOTTOM;
+	}
+	else if (manager->placeMeeting({ pos.X, pos.Y + (SHORT) portalHeight}, "Wall")) {
+		return PORTAL_TOP;
+	}
+	return PORTAL_TOP;
+}
+
+
+
+void Player::onTeleport(Portal *portal) {
+	if (!portal->getPair()->checkCollision()) {
+		if (portal->getDirection() == PORTAL_TOP && portal->getPair()->getDirection() == PORTAL_TOP) {
+			setPosition(portal->teleport());
+			momentumY = (velocityY / 18 > 6) ? 6 : velocityY / 18;
+		}
+		else {
+			setPosition(portal->teleport());
+		}
+		justTeleported = true;
+	}
+}
+
+void resetPlayerSpeed() {
+	Manager::getInstance()->getPlayer()->setHorizontalSpeed(1);
+	Manager::getInstance()->getPlayer()->setJumpPower(3);
+}
+
+
+
+void Player::setHorizontalSpeed(SHORT horiz) {
+	this->horizontalSpeed = horiz;
+}
+
+void Player::setJumpPower(int jump) {
+	this->jumpPower = jump;
+}
+
+
+
+
+void Player::onMove() {
+
+	COORD coord = getPosition();
+	//COORD leftBottom = coord;
+	//leftBottom.Y += (SHORT)getHeight();
+	
+	AABB* bound = new AABB();
+	bound->P1.Y = bound->P2.Y = getBottomY() + 1;
+	bound->P1.X = coord.X;
+	bound->P2.X = getRightX();
+
+	GameObject* bottomPortal = manager->placeMeetingBound(*bound, "Portal");
+
+	if (numOfPortals == 2 && bottomPortal != NULL) {
+		Portal* portal = dynamic_cast<Portal*>(bottomPortal);
+		PortalDir dir = portal->getDirection();
+		PortalDir pairDir = portal->getPair()->getDirection();
+
+		if (!justTeleported) {
+			if (pairDir == PORTAL_RIGHT) {
+				int momentumCap = (velocityY / 15 > 6) ? 6 : velocityY / 15;
+				setHorizontalSpeed(momentumCap);
+				manager->callAfterSeconds(resetPlayerSpeed, 1.0);
+			}
+			else if (pairDir == PORTAL_LEFT) {
+				int momentumCap = (velocityY / 15 > 6) ? 6 : velocityY / 15;
+				setHorizontalSpeed(momentumCap);
+				manager->callAfterSeconds(resetPlayerSpeed, 1.0);
+			}
+			onTeleport(portal);
+		} else {
+			// If portals are facing top and bottom and are not facing the same direction (UP DOWN LOOP MECHANIC)
+			if (dir != pairDir && dir % 2 == 0 && pairDir % 2 == 0)
+				onTeleport(portal);
+		}
+
+	}
+	onGravityPull();
+
+	delete bound;
+
+
+
+
+	if (manager->checkKeyPressed(K_LEFT) || manager->checkKeyPressed(K_A)) {
+		if (!justTeleported) {
+			onMoveLeft();
+		} else {
+			if((portals[0]->getDirection() == PORTAL_RIGHT) && (portals[0]->getDirection() == portals[1]->getDirection()))
+				onMoveRight();
+		}
+
+	}else if (manager->checkKeyPressed(K_RIGHT) || manager->checkKeyPressed(K_D)) {
+
+		if (!justTeleported) {
+			onMoveRight();
+		} else {
+			if((portals[0]->getDirection() == PORTAL_LEFT) && (portals[0]->getDirection() == portals[1]->getDirection()))
+				onMoveLeft();
+		}
+		
+	} else {
+		velocityX = 0;
+		if (justTeleported && (portals[0]->getDirection() != portals[1]->getDirection() || velocityY > 10))
+			justTeleported = false;
+	}	
+	//if (justTeleported && !manager->checkKeyPressed(K_LEFT) && !manager->checkKeyPressed(K_A)
+	//	&& (!manager->checkKeyPressed(K_D) && !manager->checkKeyPressed(K_RIGHT)))
+	//	justTeleported = false;
+
+
+
+
+}
+
+void Player::onGravityPull() {
+	COORD coord = getPosition();
+
+	AABB* bound = new AABB();
+	bound->P1.X = coord.X;
+	bound->P2.X = getRightX();
+	bound->P1.Y = bound->P2.Y = getBottomY() + 1;
+	setOnGround(manager->placeMeetingBound(*bound, "") != NULL);
+	delete bound;
+
+	if (!isOnGround()) {
+		double amt = getGravity() * manager->getTimer(TIMER_DELTA) * 20.0;
+		manager->setTimer(TIMER_GRAVITY, manager->getTimer(TIMER_GRAVITY) + amt);
+		if (manager->getTimer(TIMER_GRAVITY) >= 1.0) {
+			coord.Y++;
+			justTeleported = false;
+			velocityY+=2;
+			setPosition(coord);
+			manager->setTimer(TIMER_GRAVITY, manager->getTimer(TIMER_GRAVITY) - 1.0);
+		}
+	}
+	else {
+		coord = getPosition();
+		velocityY = 0;
+		/* Jumping */
+		if (!isJumping() && (manager->checkKeyPressed(K_UP) || manager->checkKeyPressed(K_W)) && manager->getTimer(TIMER_JUMP) >= 0.30
+			&& !manager->placeMeeting({ coord.X, coord.Y - 1 }, "Wall")) {
+			justTeleported = false;
+			coord.Y -= getJumpPower();
+			manager->setTimer(TIMER_JUMP, 0);
+		}
+		else {
+			setIsJumping(false);
+		}
+	
+	}
+	coord.Y -= momentumY;
+	setPosition(coord);
+}
+
+
+
+void Player::onMoveLeft() {
+	COORD coord = getPosition();
+	SHORT bottomY = getBottomY();
+	SHORT projectedX = coord.X - getHorizontalSpeed();
+
+	AABB* bound = new AABB();
+	bound->P1.X = bound->P2.X = coord.X - 1;
+	bound->P1.Y = coord.Y;
+	bound->P2.Y = bottomY;
+
+	GameObject* leftPortal = manager->placeMeetingBound(*bound, "Portal");
+	if (numOfPortals == 2 && leftPortal != NULL) {
+		Portal* portal = dynamic_cast<Portal*>(leftPortal);
+		onTeleport(portal);
+	}
+	else {
+		if (!manager->placeMeetingBound(*bound, "Wall"))
+			setPosition(moveToDestnSmooth(coord, { projectedX, coord.Y }));
+	}
+	delete bound;
+
+}
+
+void Player::onMoveRight() {
+	COORD coord = getPosition();
+	SHORT bottomY = getBottomY();
+	SHORT rightX = getRightX();
+
+	AABB* bound = new AABB();
+	bound->P1.X = bound->P2.X = rightX + 1;
+	bound->P1.Y = coord.Y;
+	bound->P2.Y = bottomY;
+
+	GameObject* rightPortal = manager->placeMeetingBound(*bound, "Portal");
+	if (numOfPortals == 2 && rightPortal != NULL) {
+		Portal* portal = dynamic_cast<Portal*>(rightPortal);
+		onTeleport(portal);
+	}
+	else {
+		if (!manager->placeMeetingBound(*bound, "Wall")) {
+			SHORT projectedX = rightX + getHorizontalSpeed();
+			COORD destn = moveToDestnSmooth({rightX,coord.Y }, { projectedX,coord.Y });
+			destn.X -= getWidth() - 1;
+			setPosition(destn);
+		}
+	}
+	delete bound;
+}
+
+COORD Player::moveToDestnSmooth(COORD start, COORD destination) {
+
+	AABB* bound = new AABB();
+	bound->P1 = destination;
+	bound->P2 = { destination.X, destination.Y + (SHORT)getHeight() - 1 };
+
+	COORD finalCoords = start;
+	if (!manager->placeMeetingBound(*bound, "")) {
+		finalCoords = destination;
+	} else {
+		SHORT dir = (destination.X - start.X > 0) ? 1 : -1;
+		bound->P1.X += dir;
+		bound->P2.X += dir;
+
+		while (!manager->placeMeetingBound(*bound, "")) {
+			finalCoords.X+= dir;
+			bound->P1.X += dir;
+			bound->P2.X += dir;
+		}
+	}
+	delete bound;
+	return finalCoords;
+}
+
+void Player::optimiseShootPoints() {
+	int size = (int) shootPoints.size();
+	std::vector<COORD> optimised;
+
+	int increment = size / 4;
+	if (increment == 0) increment = 1;
+	for (int i = 0; i < size; i+= increment) {
+		optimised.push_back(shootPoints[i]);
+	}
+	COORD final;
+	COORD lastPointLeft = shootPoints[size - 1];
+	COORD lastPointRight = lastPointLeft;
+	lastPointRight.X++;
+	if (manager->placeMeeting(lastPointRight, "Wall")) {
+		lastPointLeft.X--;
+		final = lastPointLeft;
+	} else if (manager->placeMeeting(lastPointLeft, "Wall")) {
+		lastPointLeft.X++;
+		final = lastPointLeft;
+	}
+	optimised.push_back(lastPointLeft);
+	shootPoints = optimised;
+}
+
+
+int Player::sign(int dxy)
+{
+	if (dxy<0) return -1;
+	else if (dxy>0) return 1;
+	else return 0;
+}
+
+COORD Player::calculateEndPoint(COORD one, COORD two) {
+
+	int x1 = (int)one.X;
+	int y1 = (int)one.Y;
+	int x2 = (int)two.X;
+	int y2 = (int)two.Y;
+
+
+	if (x1 == x2 && abs(y2-y1) > 0)
+		return two;
+
+	int x3 = (int) Manager::getInstance()->camera.X2;
+	int lowerX = Manager::getInstance()->camera.X;
+
+	if (x2 - x1 < 0) x3 = lowerX;
+
+	double gradient = ((double)(y2 - y1)) / ((double)(x2 - x1));
+	double yintercept = (y1 - gradient * x1);
+	int y3 = (int)((gradient * x3) + yintercept);
+	return{ (SHORT)x3,(SHORT)y3 };
+}
+
+std::vector<COORD> Player::line(COORD one, COORD two) {
+
+	std::vector<COORD> list;
+	int x1 = (int)one.X;
+	int y1 = (int)one.Y;
+	int x2 = (int)two.X;
+	int y2 = (int)two.Y;
+
+	int diffY = abs(y2 - y1);
+
+
+
+	int dX = x2 - x1;
+	int dY = y2 - y1;
+
+	//# Increments
+	int sX = sign(dX);
+	int sY = sign(dY);
+
+	//# Segment length
+	dX = abs(dX);
+	dY = abs(dY);
+	int maxD = max(dX, dY);
+
+	//# Initial remainder
+	double r = maxD / 2;
+
+	int x = x1;
+	int y = y1;
+
+	if (dX > dY){
+		//# Main loop
+		for (int i = 0; i< maxD; i++) {
+			Viewport v = Manager::getInstance()->camera;
+			if (x >=  v.X  && x <= v.X2 && y >= 0 && y <= 50)
+				list.push_back({ (SHORT)x, (SHORT)y });
+			//# Update (X, Y) and R
+			x += sX;
+			r += dY; // Horizontal Movement
+			if (r >= dX)
+			{
+				y += sY;
+				r -= dX; // Diagonal Movement
+			}
+		}
+	} else {
+		for (int i = 0; i< maxD; i++) {
+			Viewport v = Manager::getInstance()->camera;
+			if (x >= v.X  && x <= v.X2 && y >= 0 && y <= 50)
+				list.push_back({ (SHORT)x, (SHORT)y });
+			//# Update (X, Y) and R
+			y += sY;
+			r += dX; // Horizontal Movement
+			if (r >= dY)
+			{
+				x += sX;
+				r -= dY; // Diagonal Movement
+			}
+		}
+	}
+	return list;
+}

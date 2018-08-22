@@ -1,0 +1,2 @@
+GameObject=Wall,5-5,1,2
+GameObject=Wall,10-20,2,1

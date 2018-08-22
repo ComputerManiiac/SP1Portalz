@@ -1,0 +1,19 @@
+﻿  Component.cpp
+  GameObject.cpp
+  LogicComponent.cpp
+  Manager.cpp
+  MovingPlatform.cpp
+  PatrolComponent.cpp
+  Player.cpp
+  Portal.cpp
+  RenderComponent.cpp
+  Wall.cpp
+  game.cpp
+  main.cpp
+  Generating code
+  30 of 1016 functions ( 3.0%) were compiled, the rest were copied from previous compilation.
+    1 functions were new in current compilation
+    23 functions had inline decision re-evaluated but remain unchanged
+  Finished generating code
+  SP1Framework.vcxproj -> D:\Users\l533\Desktop\Day 4 Night 2\SP_1\Release\SP1Framework.exe
+  SP1Framework.vcxproj -> D:\Users\l533\Desktop\Day 4 Night 2\SP_1\Release\SP1Framework.pdb (Full PDB)

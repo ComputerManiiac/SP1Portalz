@@ -1,0 +1,384 @@
+#include "Manager.h"
+#include "Wall.h"
+#include "MovingPlatform.h"
+#include "Portal.h"
+
+Manager* Manager::instance = 0;
+
+Manager::Manager()
+{
+
+	showDebug = true;
+
+	for (int i = 0; i < COMP_COUNT; i++) {
+		std::vector<Component*> comp;
+		categorisedComponents.push_back(comp);
+	}
+
+	for (int i = 0; i < TIMER_COUNT;i++) {
+		timers.push_back(0.0);
+	}
+
+	Viewport camera = Viewport();
+	camera.X = 0;
+	camera.Y = 0;
+	camera.X2 = camera.X + cameraWidth;
+	camera.Y2 = camera.Y + cameraHeight;
+
+	const char map[11] = " .,:;ox%#@";
+
+	spawnNewGameObject("Player", { 41,24 }, 2, 3, {"1","75.0","3"});
+
+	
+
+	
+
+	
+	std::ifstream file("sidescroll.txt");
+	std::string line;
+	std::vector<std::string> identifier;
+	std::vector<std::string> parameters;
+
+	while (std::getline(file, line)) {
+		identifier = split(line, '=');
+		if (identifier[0] == "GameObject") {
+			parameters = split(identifier[1], ',');
+			std::string name = parameters[0];
+			std::vector<std::string> coords = split(parameters[1], '-');
+			COORD c = { (SHORT)stoi(coords[0]), (SHORT)stoi(coords[1]) };
+			int width = stoi(parameters[2]);
+			int height = stoi(parameters[3]);
+			if (height > 0 && width > 0) {
+				spawnNewGameObject(name, c, width, height, { "true" });
+		
+			}
+		}
+	}
+	parameters.clear();
+	identifier.clear();
+	file.close();
+	
+	//
+	//
+	//
+
+	//
+	//
+	spawnNewGameObject("Wall", { 18,30 }, 12, 1, { "true" });
+	//spawnNewGameObject("Wall", { 20,20 }, 4, 10, { "" });
+	//spawnNewGameObject("Wall", { 100,20 }, 4, 10, { "" });
+
+	// spawnNewGameObject("MovingPlatform", { 70,21 }, 5, 1, { "" });
+	//
+
+
+	//spawnNewGameObject("MovingPlatform", { 10,10 }, 5, 1, { "" });
+	//
+	//
+	//for (SHORT x = 0; x < 60; x++) {
+	//	for (SHORT y = 0; y < 20; y++) {
+	//		spawnNewGameObject("Wall", { y,x }, 1, 1, { "true" });
+	//	}
+	//}
+	//
+	//spawnNewGameObject("Wall", { 39,39 }, 10, 2, { "" });
+	//spawnNewGameObject("Wall", { 23,39 }, 3, 2, { "" });
+	//spawnNewGameObject("MovingPlatform", { 8,34 }, 8, 1, { "" });
+}
+
+
+/*
+Free up memory allocated by new keyword 
+*/
+
+Manager::~Manager()
+{
+
+	for (int i = 0; i < (int)gameObjects.size();i++) {
+		delete gameObjects[i];
+	}
+
+	for (int i = 0; i < (int)categorisedComponents.size(); i++) {
+		categorisedComponents.at(i).clear();
+	}
+
+	categorisedComponents.clear();
+	anims.clear();
+
+	delete instance;
+}
+
+std::vector<std::string> Manager::split(const std::string &input, char delim) {
+	std::vector<std::string> result;
+	std::stringstream ss(input);
+	std::string item;
+	while (std::getline(ss, item, delim))
+		result.push_back(item);
+	return result;
+}
+
+void Manager::setConsole(Console *cons) {
+	console = cons;
+
+	this->grid = new Grid(console->getConsoleSize().X, console->getConsoleSize().Y, 10, 10);
+	grid->sort(&gameObjects);
+
+}
+
+Console* Manager::getConsole() {
+	return console;
+
+}
+
+Manager* Manager::getInstance()
+{
+	if (instance == 0) instance = new Manager();
+	return instance;
+}
+
+Grid* Manager::getGrid() {
+	return this->grid;
+}
+
+
+
+/*
+Takes two input colours and interprets it by converting it from decimal to 
+hexadecimal format suitable to be stored in WORD for console writing.
+*/
+
+WORD Manager::interpretColour(Colour background, Colour foreground) {
+	int num = ((int)background) * 16 + ((int)foreground);
+	return ((WORD)num);
+}
+
+Player* Manager::getPlayer() {
+	return player;
+}
+
+
+std::vector<GameObject*>* Manager::getGameObjects() {
+	return &(this->gameObjects);
+}
+
+// Instantiates new Game Object
+GameObject* Manager::spawnNewGameObject(std::string name, COORD position, 
+	int width, int height, std::vector<std::string> args) {
+	int uid = (int)gameObjects.size();
+	GameObject *gameObj = NULL;
+	if (name == "Wall") {
+		gameObj = new Wall(this, position, width, height, uid, args);
+	}else if (name == "Player") {
+		/* 
+		Argument List
+
+		args[0] - Gravity
+		args[1] - Jump Power
+		args[2] - Movement Speed
+		*/
+		player = new Player(this, position, width, height, stoi(args[0]), stod(args[1]), stoi(args[2]));
+		gameObj = player;
+	} else if (name == "Portal") {
+		gameObj = new Portal(this, position, width, height, uid, {args[0]});
+	}
+	else if (name == "MovingPlatform") {
+		gameObj = new MovingPlatform(this, position, width, height, uid, args);
+		//	MovingPlatform *m = new MovingPlatform(position, width, height, uid, args);
+		//RenderComponent *r = m;
+		//addComponentToCategory(r, COMP_RENDERABLE);
+		//PatrolComponent *p = m;
+		//addComponentToCategory(p, COMP_PATROL);
+		//g->addComponent(r);
+		//g->addComponent(p);
+		
+	}
+	//}
+	/**/
+	/*else if (name == "Player") {
+		this->player = new Player({ 28,24 }, 2, 3, 2, 80.0, 4, 0.60);
+		g = this->player;
+	}*/
+	addToGameObjects(gameObj);
+	return gameObj;
+}
+
+void Manager::addToGameObjects(GameObject *g) {
+	this->gameObjects.push_back(g);
+}
+
+GameObject* Manager::placeMeeting(COORD coord, std::string type) {
+	if (coord.X < 0 || coord.X >= console->getConsoleSize().X || coord.Y < 0 || coord.Y >= console->getConsoleSize().Y) return NULL;
+
+	//std::vector<GameObject*> nearby = grid->getGameObjectsInCell(grid->getCell(coord));
+	for (int i = 0; i < (int)gameObjects.size(); i++) {
+		collisionCalls++;
+		GameObject* g = gameObjects.at(i);
+		//g->hasComponent(COMP_COLLIDABLE)
+		if (g->hasComponent(COMP_COLLIDABLE)) {
+			if ((type != "" && g->getName() == type) || type == "") {
+				COORD refPos = g->getPosition();
+				SHORT rightX = refPos.X + (SHORT)g->getWidth();
+				SHORT rightY = refPos.Y + (SHORT)g->getHeight();
+				if (coord.X >= refPos.X && coord.X < rightX) {
+					if (coord.Y >= refPos.Y && coord.Y < rightY) {
+						return g;
+					}
+				}
+			}
+
+		}
+	}
+	return NULL;
+}
+
+
+
+void Manager::addComponentToCategory(Component *c, int id) {
+	categorisedComponents[id].push_back(c);
+}
+
+void Manager::removeComponentFromCategory(Component* c, int id) {
+	std::vector<Component*>* current = &(categorisedComponents[id]);
+	current->erase(std::remove(current->begin(), current->end(), c), current->end());
+}
+
+std::vector<Component*> Manager::getCategory(int id) {
+	return this->categorisedComponents[id];
+}
+
+void Manager::updateKeyPress() {
+	g_abKeyPressed[K_UP] = isKeyPressed(VK_UP);
+	g_abKeyPressed[K_LEFT] = isKeyPressed(VK_LEFT);
+	g_abKeyPressed[K_RIGHT] = isKeyPressed(VK_RIGHT);
+	g_abKeyPressed[K_ESCAPE] = isKeyPressed(VK_ESCAPE);
+	g_abKeyPressed[K_W] = isKeyPressed(VK_W);
+	g_abKeyPressed[K_A] = isKeyPressed(VK_A);
+	g_abKeyPressed[K_S] = isKeyPressed(VK_S);
+	g_abKeyPressed[K_D] = isKeyPressed(VK_D);
+	g_abKeyPressed[K_SPACE] = isKeyPressed(VK_SPACE);
+	g_abKeyPressed[K_LBUTTON] = isKeyPressed(VK_LBUTTON);
+	g_abKeyPressed[K_TILDE] = isKeyPressed(VK_OEM_3);
+}
+
+bool Manager::checkKeyPressed(EKEYS key) {
+	return g_abKeyPressed[key];
+}
+
+
+
+void Manager::callAfterSeconds(pFunction func, double delay) {
+	int id = (int)doLaterTimings.size();
+	doLaterTimings[id] = delay;
+	doLaterFunctions[id] = func;
+}
+
+void Manager::updateLater(double deltaTime) {
+	std::vector<int> toErase;
+	for (auto const& i : doLaterTimings)
+	{
+		int key = i.first; 
+		double value = i.second;
+		value -= deltaTime;
+		doLaterTimings[key] = value;
+		if (value <= 0.0) {
+			pFunction func = (pFunction) doLaterFunctions[key];
+			func();
+			toErase.push_back(key);
+		}
+			//int result3 = (instance1.*pt2Member)(12, 'a', 'b');
+	}
+	if (toErase.size() > 0) {
+		for (int i = 0; i < (int)toErase.size(); i++) {
+			int id = toErase[i];
+			doLaterTimings.erase(id);
+			doLaterFunctions.erase(id);
+		}
+		toErase.clear();
+	}
+}
+
+
+
+void Manager::setTimer(Timer t, double time) {
+	timers[t] = time;
+}
+
+void Manager::updateTimers(double deltaTime) {
+	for (int i = 0; i < TIMER_COUNT; i++) {
+
+		if (i == TIMER_BOUNCE || i == TIMER_SHOOT 
+			|| i == TIMER_COLLISION) continue;
+
+		if (i == TIMER_DELTA) {
+			timers[i] = deltaTime;
+		}
+		else {
+			timers[i] += deltaTime;
+		}
+	}
+}
+
+double Manager::getTimer(Timer t) {
+	return timers[t];
+}
+
+void Manager::printScaledImage(const char *path, const char map[11], int subGroupWidth, int subGroupHeight, int maxWidth) {
+	std::vector<int> bitmapValues;
+	std::vector<std::string> mapped;
+
+	CImg<unsigned char> src(path);
+	int width = src.width();
+	int height = src.height();
+	int totalBrightness = 0;
+
+
+	// Calculate brightness values for each pixel
+	for (int y = 0; y < height; y++) {
+		for (int x = 0; x < width; x++) {
+			int r = (int)src(x, y, 0, 0);
+			int g = (int)src(x, y, 0, 1);
+			int b = (int)src(x, y, 0, 2);
+			int brightnessPerPixel = (r + g + b) / 3;
+			bitmapValues.push_back(brightnessPerPixel);
+		}
+	}
+
+	// Find a suitable sub group width and height
+	while (width % subGroupWidth != 0) width--;
+	if (height % subGroupHeight != 0) height--;
+
+	// Calculate number of sub groups both horizontally and vertically
+	int subGroupsH = width / subGroupWidth;
+	int subGroupsV = height / subGroupHeight;
+
+	while (subGroupsH > maxWidth) {
+		subGroupWidth++;
+		subGroupHeight = subGroupWidth * 2;
+		subGroupsH = width / subGroupWidth;
+		subGroupsV = height / subGroupHeight;
+	}
+
+	for (int y = 0; y < height; y += subGroupHeight) {
+		std::string currentLine = "";
+		for (int x = 0; x < width; x += subGroupWidth) {
+			int subGroupBrightness = 0;
+			for (int sX = 0; sX < subGroupWidth; sX++) {
+				for (int sY = 0; sY < subGroupHeight; sY++) {
+					int posInVector = y * src.width() + x;
+					subGroupBrightness += bitmapValues[posInVector];
+				}
+			}
+			int averageSubGroupBrightness = subGroupBrightness / (subGroupWidth*subGroupHeight);
+
+			double ratio = 10 / 256.0;
+			int v = (int)(averageSubGroupBrightness * ratio);
+			char t = map[v];
+			currentLine.push_back(t);
+		}
+		mapped.push_back(currentLine);
+	}
+
+	anims.push_back(mapped);
+	mapped.clear();
+	bitmapValues.clear();
+}
